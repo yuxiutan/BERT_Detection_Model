@@ -1,56 +1,90 @@
-#!/usr/bin/env python3
-"""
-重訓練排程器
-每天晚上21:00自動執行重訓練任務
-"""
-
-import sys
 import os
-import asyncio
-import logging
-from datetime import datetime, timezone
+import json
+import glob
+import shutil
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
+from utils.wazuh_api import fetch_wazuh_data
+from Model_API.inference import run_inference
+from Model_API.retrain_model import retrain_model
+from Model_API.model_build import load_model
 
-# 添加專案根目錄到 Python 路徑
-sys.path.insert(0, '/app')
+LOW_CONF_FILE = os.environ['LOW_CONFIDENCE_FILE']
+WEIGHTS_DIR = os.environ['MODEL_WEIGHTS_DIR']
+ORIGINAL_PROCESSED_DATA = os.environ['ORIGINAL_PROCESSED_DATA']
+ORIGINAL_REFERENCE_EMBEDDINGS = os.environ['ORIGINAL_REFERENCE_EMBEDDINGS']
 
-from scripts.retrain_manager import RetrainManager
+os.makedirs(WEIGHTS_DIR, exist_ok=True)
+os.makedirs(f"{WEIGHTS_DIR}/backups", exist_ok=True)
 
-# 設定日誌
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('/app/logs/retrain_scheduler.log'),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
+def monitor_task():
+    """每 3 分鐘獲取資料並推論，低信心度事件存入檔案"""
+    events = fetch_wazuh_data()
+    if not events:
+        return
 
-async def main():
-    """主要的重訓練排程任務"""
-    try:
-        logger.info("🕘 重訓練排程器開始執行...")
-        logger.info(f"⏰ 執行時間: {datetime.now(timezone.utc).isoformat()}")
-        
-        # 初始化重訓練管理器
-        retrain_manager = RetrainManager()
-        
-        # 執行重訓練
-        success = await retrain_manager.retrain_model()
-        
-        if success:
-            logger.info("✅ 排程重訓練任務完成")
-            print("SUCCESS: Retrain completed successfully")
-        else:
-            logger.error("❌ 排程重訓練任務失敗")
-            print("ERROR: Retrain failed")
-            sys.exit(1)
-            
-    except Exception as e:
-        logger.error(f"❌ 重訓練排程器異常: {str(e)}")
-        print(f"ERROR: {str(e)}")
-        sys.exit(1)
+    model = load_model()  # 載入最新模型
+    low_conf_events = []
 
-if __name__ == "__main__":
-    # 運行異步主函數
-    asyncio.run(main())
+    for event in events:
+        confidence = run_inference(model, event)  # 假設返回信心度
+        if confidence < 0.3:
+            low_conf_events.append(event)
+
+    if low_conf_events:
+        with open(LOW_CONF_FILE, 'a', encoding='utf-8') as f:
+            for event in low_conf_events:
+                f.write(json.dumps(event, ensure_ascii=False) + '\n')
+        print(f"儲存 {len(low_conf_events)} 筆低信心度事件到 {LOW_CONF_FILE}")
+
+def retrain_task():
+    """每天 21:00 使用低信心度事件重新訓練"""
+    if not os.path.exists(LOW_CONF_FILE):
+        print("無低信心度事件，跳過 Retrain")
+        return
+
+    with open(LOW_CONF_FILE, 'r', encoding='utf-8') as f:
+        low_conf_data = [json.loads(line) for line in f if line.strip()]
+
+    if not low_conf_data:
+        print("低信心度事件檔案為空，跳過 Retrain")
+        return
+
+    # 備份最新三版權重
+    current_processed = sorted(glob.glob(f"{WEIGHTS_DIR}/processed_data_v*.pkl"), key=os.path.getmtime)
+    current_embeddings = sorted(glob.glob(f"{WEIGHTS_DIR}/reference_embeddings_v*.pkl"), key=os.path.getmtime)
+    
+    if len(current_processed) >= 3:
+        backups = current_processed[-3:]  # 最新三版
+        for i, weight in enumerate(backups):
+            shutil.copy(weight, f"{WEIGHTS_DIR}/backups/processed_data_backup_v{i+1}.pkl")
+            embedding = weight.replace("processed_data", "reference_embeddings")
+            if os.path.exists(embedding):
+                shutil.copy(embedding, f"{WEIGHTS_DIR}/backups/reference_embeddings_backup_v{i+1}.pkl")
+            print(f"備份 {weight} 和對應嵌入檔案")
+
+    # 重新訓練
+    new_version = len(current_processed) + 1
+    new_processed_path = f"{WEIGHTS_DIR}/processed_data_v{new_version}.pkl"
+    new_embeddings_path = f"{WEIGHTS_DIR}/reference_embeddings_v{new_version}.pkl"
+    
+    retrain_model(
+        low_conf_data,
+        base_processed=ORIGINAL_PROCESSED_DATA,
+        base_embeddings=ORIGINAL_REFERENCE_EMBEDDINGS,
+        output_processed=new_processed_path,
+        output_embeddings=new_embeddings_path
+    )
+    print(f"生成新權重: {new_processed_path}, {new_embeddings_path}")
+
+    # 清空低信心度事件檔案
+    open(LOW_CONF_FILE, 'w').close()
+    print("清空低信心度事件檔案")
+
+def start_scheduler():
+    """啟動排程器"""
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(monitor_task, 'interval', minutes=3)
+    scheduler.add_job(retrain_task, CronTrigger(hour=21, minute=0))
+    scheduler.start()
+    print("📅 排程器啟動")
