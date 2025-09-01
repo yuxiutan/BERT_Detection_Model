@@ -1,0 +1,34 @@
+# 深度學習框架
+torch>=1.9.0
+transformers>=4.20.0
+torch-audio>=0.9.0
+
+# Web API 框架
+fastapi>=0.68.0
+uvicorn[standard]>=0.15.0
+pydantic>=1.8.0
+
+# 資料處理
+numpy>=1.21.0
+pandas>=1.3.0
+scikit-learn>=1.0.0
+
+# HTTP 客戶端
+aiohttp>=3.8.0
+requests>=2.25.0
+
+# JSON 處理和工具
+jsonlines>=2.0.0
+
+# 日誌和監控
+python-multipart>=0.0.5
+
+# 環境管理
+python-dotenv>=0.19.0
+
+# 資料庫（如果需要）
+redis>=4.0.0
+
+# 其他工具
+pathlib2>=2.3.0
+asyncio-mqtt>=0.10.0
