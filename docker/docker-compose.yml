@@ -1,17 +1,45 @@
 version: '3.8'
 
 services:
-  transformer-detection:
+  bert-detection-api:
     build:
-      context: ..
-      dockerfile: ./docker/Dockerfile
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: bert-detection-api
     ports:
-      - "8050:8050"   # Dash Dashboard
-      - "8000:8000"   # FastAPI API
+      - "8000:8000"
+    environment:
+      - WAZUH_API_URL=${WAZUH_API_URL}
+      - WAZUH_API_USERNAME=${WAZUH_API_USERNAME}
+      - WAZUH_API_PASSWORD=${WAZUH_API_PASSWORD}
+      - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL}
+      - CONFIDENCE_THRESHOLD=0.3
+      - DETECTION_INTERVAL=180  # 3 minutes
+      - RETRAIN_SCHEDULE="0 21 * * *"  # 每天晚上21:00
+      - MODEL_BACKUP_COUNT=3
     volumes:
-      - ../data:/app/data
-      - ../Model:/app/Model
-      - ../utils:/app/utils
-    env_file:
-      - ../utils/.env.local
-    restart: always
+      - ./Model:/app/Model
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - model_backups:/app/model_backups
+      - low_confidence_data:/app/low_confidence_data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  redis:
+    image: redis:7-alpine
+    container_name: bert-detection-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+volumes:
+  model_backups:
+  low_confidence_data:
+  redis_data:
