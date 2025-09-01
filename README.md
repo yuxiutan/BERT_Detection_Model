@@ -1,5 +1,8 @@
 # BERT_Detection_Model
 
+## Project Structure
+
+```bash
 Realtime_Transformer_Chain_Detection/
 ├── Model/                        # Model evaluation outputs
 │ ├── Report/
@@ -40,3 +43,4 @@ Realtime_Transformer_Chain_Detection/
 ├── Model_training_history.png      # Training loss/accuracy
 ├── app.py                          # Dash-based dashboard
 └── requirements.txt                # Python dependency list
+```
