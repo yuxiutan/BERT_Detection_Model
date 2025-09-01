@@ -32,3 +32,13 @@ redis>=4.0.0
 # 其他工具
 pathlib2>=2.3.0
 asyncio-mqtt>=0.10.0
+
+fastapi==0.115.0
+uvicorn==0.30.6
+apscheduler==3.10.4
+python-dotenv==1.0.1
+requests==2.32.3
+torch==2.4.0
+transformers==4.44.2
+pandas==2.2.2
+numpy==1.26.4
